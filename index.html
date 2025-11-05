@@ -1,56 +1,221 @@
-<!DOCTYPE html>
-<html lang="en">
-
+<<!doctype html>
+<html>
 <head>
-  <!-- 
-      This is an HTML comment
-      You can write text in a comment and the content won't be visible in the page
-    -->
-
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" href="https://glitch.com/favicon.ico" />
-
-  <!--
-      This is the page head - it contains info the browser uses
-      Like the title, which appears on the browser tab but not inside the page
-      Further down you'll see the content that displays in the page
-    -->
-  <title>Hello World!</title>
-
-  <!-- The website stylesheet -->
-  <link rel="stylesheet" href="/style.css" />
-
-  <!-- The website JavaScript file -->
-  <script src="/script.js" defer></script>
+  <title>Mini Voxel World</title>
+  <style>
+    html,body{height:100%;margin:0;background:#6aa;}
+    #info{position:absolute;left:10px;top:10px;color:#fff;font-family:sans-serif;z-index:2}
+    canvas{display:block}
+    .btn{background:rgba(255,255,255,0.2);padding:6px 8px;border-radius:6px;margin-top:6px;display:inline-block}
+  </style>
 </head>
-
 <body>
-  <!--
-      The body includes the content you see in the page
-      Each element is defined using tags, like this <div></div>
-      The attributes like class="wrapper" let us style elements in the CSS
-    -->
-  <div class="wrapper">
-    <div class="content" role="main">
-      <h1 class="title">Oh hi website!</h1>
-      <img src="/cool-website.svg" class="illustration" alt="cool website" />
-      <div class="instructions">
-        <p>
-          Fork <a href="https://github.com/glitchdotcom/website-to-compute">this project</a> and open it in a GitHub Codespace.
-        </p>
-        <p> Follow the steps in the README to deploy your new website to Fastly in a few steps!
-        </p>
-
-      </div>
-
-      <footer class="footer">
-        <div>
-          <a class="remix" href="https://github.com/glitchdotcom/website-to-compute">🚧 Get your own site</a>
-        </div>
-      </footer>
-    </div>
+  <div id="info">
+    <div>WASD to move • Mouse to look • Left click remove • Right click place</div>
+    <div class="btn" id="lockBtn">Click to lock pointer</div>
   </div>
-</body>
 
+  <script src="https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.min.js"></script>
+  <script>
+  // --- Basic three.js setup ---
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87ceeb);
+
+  const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
+  camera.position.set(5, 6, 12);
+
+  const renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(innerWidth, innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  window.addEventListener('resize', ()=> {
+    camera.aspect = innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+
+  // --- lights ---
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
+  hemi.position.set(0, 50, 0); scene.add(hemi);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+  dir.position.set(-10,20,10); scene.add(dir);
+
+  // --- voxel storage & materials ---
+  const BLOCK_SIZE = 1;
+  const blocks = {}; // key = "x,y,z" -> mesh
+  const boxGeom = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+
+  const materials = {
+    grass: new THREE.MeshLambertMaterial({color:0x65a04f}),
+    dirt: new THREE.MeshLambertMaterial({color:0x8b5a2b}),
+    stone: new THREE.MeshLambertMaterial({color:0x888888}),
+  };
+
+  function keyFrom(x,y,z){return `${x},${y},${z}`;}
+
+  // create small terrain: flat plane + a few raised blocks
+  for(let x=0;x<16;x++){
+    for(let z=0;z<16;z++){
+      const h = (Math.abs(x-8) + Math.abs(z-8) < 5) ? 2 : 1;
+      for(let y=0;y<h;y++){
+        const mat = (y===h-1) ? materials.grass : materials.dirt;
+        addBlock(x, y, z, mat);
+      }
+    }
+  }
+
+  // helper: add & remove blocks
+  function addBlock(x,y,z, material=materials.dirt){
+    const k = keyFrom(x,y,z);
+    if(blocks[k]) return;
+    const m = new THREE.Mesh(boxGeom, material);
+    m.position.set(x + BLOCK_SIZE/2, y + BLOCK_SIZE/2, z + BLOCK_SIZE/2);
+    m.userData.grid = {x,y,z};
+    scene.add(m);
+    blocks[k]=m;
+  }
+  function removeBlock(x,y,z){
+    const k = keyFrom(x,y,z);
+    const m = blocks[k]; if(!m) return;
+    scene.remove(m);
+    if(m.geometry) m.geometry.dispose();
+    if(m.material) {} // don't dispose shared materials
+    delete blocks[k];
+  }
+
+  // --- simple movement & pointer lock look ---
+  let move = {f:0,b:0,l:0,r:0};
+  const speed = 6;
+  document.addEventListener('keydown', e=>{
+    if(e.code==='KeyW') move.f=1;
+    if(e.code==='KeyS') move.b=1;
+    if(e.code==='KeyA') move.l=1;
+    if(e.code==='KeyD') move.r=1;
+  });
+  document.addEventListener('keyup', e=>{
+    if(e.code==='KeyW') move.f=0;
+    if(e.code==='KeyS') move.b=0;
+    if(e.code==='KeyA') move.l=0;
+    if(e.code==='KeyD') move.r=0;
+  });
+
+  // pointer lock for mouse look
+  const lockBtn = document.getElementById('lockBtn');
+  lockBtn.addEventListener('click', ()=> {
+    renderer.domElement.requestPointerLock();
+  });
+
+  let yaw=0, pitch=0;
+  document.addEventListener('pointerlockchange', ()=>{
+    if(document.pointerLockElement === renderer.domElement){
+      document.addEventListener('mousemove', onMouseMove);
+      lockBtn.style.display='none';
+    } else {
+      document.removeEventListener('mousemove', onMouseMove);
+      lockBtn.style.display='';
+    }
+  });
+  function onMouseMove(e){
+    const sensitivity = 0.002;
+    yaw -= e.movementX * sensitivity;
+    pitch -= e.movementY * sensitivity;
+    pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+  }
+
+  // mouse raycast for block selection
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  let highlighted = null;
+  const highlightMat = new THREE.MeshBasicMaterial({color:0xffff00, wireframe:true});
+
+  function updateHighlight(){
+    // cast from camera through center of screen
+    raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+    const intersects = raycaster.intersectObjects(Object.values(blocks));
+    if(intersects.length>0){
+      const hit = intersects[0];
+      const block = hit.object;
+      const n = hit.face.normal;
+      // position of the face's block
+      if(highlighted && highlighted.block === block) return;
+      // new highlight
+      if(highlighted){ scene.remove(highlighted.mesh); highlighted=null; }
+      const m = new THREE.Mesh(boxGeom, highlightMat);
+      m.position.copy(block.position);
+      m.position.addScaledVector(n, n.x + n.y + n.z === 0 ? 0 : 0); // keep same pos
+      scene.add(m);
+      highlighted = {mesh:m, block:block, normal:n.clone()};
+    } else {
+      if(highlighted){ scene.remove(highlighted.mesh); highlighted=null; }
+    }
+  }
+
+  // Mouse clicks: left remove, right place
+  renderer.domElement.addEventListener('mousedown', (e)=>{
+    e.preventDefault();
+    // use center ray to pick block
+    raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+    const inter = raycaster.intersectObjects(Object.values(blocks));
+    if(inter.length===0) return;
+    const hit = inter[0];
+    const block = hit.object;
+    const n = hit.face.normal;
+    const gx = block.userData.grid.x;
+    const gy = block.userData.grid.y;
+    const gz = block.userData.grid.z;
+    if(e.button===0){
+      // left click: remove
+      removeBlock(gx, gy, gz);
+    } else if(e.button===2){
+      // right click: place a block adjacent to face
+      const px = gx + n.x;
+      const py = gy + n.y;
+      const pz = gz + n.z;
+      addBlock(px, py, pz, materials.stone);
+    }
+  });
+
+  // prevent context menu on right click
+  window.addEventListener('contextmenu', e => e.preventDefault());
+
+  // --- animate & physics-lite camera movement ---
+  let prev = performance.now();
+  function animate(){
+    const now = performance.now();
+    const dt = (now - prev) / 1000;
+    prev = now;
+
+    // camera orientation from yaw/pitch
+    camera.rotation.order = "YXZ";
+    camera.rotation.y = yaw;
+    camera.rotation.x = pitch;
+
+    // movement in camera local axes
+    const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+    const right = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion);
+    forward.y = 0; right.y = 0;
+    forward.normalize(); right.normalize();
+    const dir = new THREE.Vector3();
+    dir.addScaledVector(forward, move.f - move.b);
+    dir.addScaledVector(right, move.r - move.l);
+    if(dir.lengthSq()>0) {
+      dir.normalize();
+      camera.position.addScaledVector(dir, dt * speed);
+    }
+
+    updateHighlight();
+    renderer.render(scene, camera);
+    requestAnimationFrame(animate);
+  }
+  animate();
+
+  // simple grid helper
+  const grid = new THREE.GridHelper(32, 32);
+  scene.add(grid);
+
+  // informative camera starting look
+  camera.lookAt(new THREE.Vector3(8,1,8));
+  </script>
+</body>
 </html>
